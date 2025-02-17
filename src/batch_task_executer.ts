@@ -1,10 +1,10 @@
 
-type FetchFunction<T> = (() => Promise<T>)|(()=>T);
+type TaskFunction<T> = (() => Promise<T>)|(()=>T);
 
 /** Batch and performs same/repeated asynchronous tasks */
 export class BatchedTaskExecutor {
 
-  private pendingRequests: Map<string, {
+  private pendingTasks: Map<string, {
     promise: Promise<any>;
   }> = new Map();
 
@@ -21,34 +21,32 @@ export class BatchedTaskExecutor {
     /**
      * The task to execute. 
      */
-    taskFn: FetchFunction<T>,
+    taskFn: TaskFunction<T>,
     options: {
         timeout?: number;
         retries?: number;
     } = {}
   ): Promise<T> {
 
-    // Check if request is already in progress
-    if (this.pendingRequests.has(key)) {
-        const request = this.pendingRequests.get(key)!;
-        return request.promise as Promise<T>;
+    // Check if task is already in progress
+    if (this.pendingTasks.has(key)) {
+        const task = this.pendingTasks.get(key)!;
+        return task.promise as Promise<T>;
     }
     
-    // Create the promise that executes the fetch
     const promise = new Promise<T>((resolve, reject) => {
 
-        // Handle timeout
+        // Handle timeout if any
         const timeoutId = options.timeout 
         ? setTimeout(() => {
-            if (this.pendingRequests.has(key)) {
-                this.pendingRequests.delete(key);
+            if (this.pendingTasks.has(key)) {
+                this.pendingTasks.delete(key);
                 reject(new Error(`Request timeout after ${options.timeout}ms`));
             }
             }, options.timeout)
         : null;
         
-        // Execute the fetch inside the promise constructor
-        const executeRequest = async () => {
+        const executeTask = async () => {
             try {
                 // Retry logic
                 let retriesLeft = options.retries || 0;
@@ -63,7 +61,7 @@ export class BatchedTaskExecutor {
                     } catch (err) {
                         if (retriesLeft <= 0) throw err;
                         retriesLeft--;
-                        await new Promise(r => setTimeout(r, 1000 * (options.retries! - retriesLeft)));
+                        await new Promise(resolve => setTimeout(resolve, 1000 * (options.retries! - retriesLeft)));
                     }
                 } while (retriesLeft >= 0);
                 
@@ -72,22 +70,22 @@ export class BatchedTaskExecutor {
                 }
         
                 // Clean up and resolve
-                this.pendingRequests.delete(key);
+                this.pendingTasks.delete(key);
                 if (timeoutId) clearTimeout(timeoutId);
                 resolve(result);
             } catch (error) {
                 // Clean up and reject
-                this.pendingRequests.delete(key);
+                this.pendingTasks.delete(key);
                 if (timeoutId) clearTimeout(timeoutId);
                 reject(error instanceof Error ? error : new Error(String(error)));
             }
         };
         
         // Start the execution
-        executeRequest();
+        executeTask();
     });
 
-    this.pendingRequests.set(key, {promise});
+    this.pendingTasks.set(key, {promise});
     
     return promise;
   }
